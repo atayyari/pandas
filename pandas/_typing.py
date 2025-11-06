@@ -189,6 +189,7 @@ IndexLabel: TypeAlias = Hashable | Sequence[Hashable]
 Level: TypeAlias = Hashable
 Shape: TypeAlias = tuple[int, ...]
 Suffixes: TypeAlias = Sequence[str | None]
+Prefixes: TypeAlias = Sequence[str | None]
 Ordered: TypeAlias = bool | None
 JSONSerializable: TypeAlias = PythonScalar | list | dict | None
 Frequency: TypeAlias = Union[str, "BaseOffset"]

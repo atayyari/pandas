@@ -35,6 +35,7 @@ from pandas._typing import (
     IndexLabel,
     JoinHow,
     MergeHow,
+    Prefixes,
     Shape,
     Suffixes,
     npt,
@@ -154,6 +155,7 @@ def merge(
     right_index: bool = False,
     sort: bool = False,
     suffixes: Suffixes = ("_x", "_y"),
+    prefixes: Prefixes | None = None,
     copy: bool | lib.NoDefault = lib.no_default,
     indicator: str | bool = False,
     validate: str | None = None,
@@ -228,6 +230,13 @@ def merge(
         of a string to indicate that the column name from `left` or
         `right` should be left as-is, with no suffix. At least one of the
         values must not be None.
+    prefixes : list-like, default None
+        A length-2 sequence where each element is optionally a string
+        indicating the prefix to add to overlapping column names in
+        `left` and `right` respectively. Pass a value of `None` instead
+        of a string to indicate that the column name from `left` or
+        `right` should be left as-is, with no prefix. At least one of the
+        values must not be None. Cannot be used together with suffixes.
     copy : bool, default False
         If False, avoid copy if possible.
 
@@ -320,6 +329,18 @@ def merge(
     4  foo           5  foo            5
     5  foo           5  foo            8
 
+    Merge DataFrames df1 and df2 with specified left and right prefixes
+    prepended to any overlapping columns.
+
+    >>> df1.merge(df2, left_on="lkey", right_on="rkey", prefixes=("left_", "right_"))
+      lkey  left_value rkey  right_value
+    0  foo           1  foo            5
+    1  foo           1  foo            8
+    2  bar           2  bar            6
+    3  baz           3  baz            7
+    4  foo           5  foo            5
+    5  foo           5  foo            8
+
     Merge DataFrames df1 and df2, but raise an exception if the DataFrames have
     any overlapping columns.
 
@@ -381,6 +402,7 @@ def merge(
             right_index=right_index,
             sort=sort,
             suffixes=suffixes,
+            prefixes=prefixes,
             indicator=indicator,
             validate=validate,
         )
@@ -395,6 +417,7 @@ def merge(
             left_index=left_index,
             right_index=right_index,
             sort=sort,
+            prefixes=prefixes,
             suffixes=suffixes,
             indicator=indicator,
             validate=validate,
@@ -412,6 +435,7 @@ def _cross_merge(
     right_index: bool = False,
     sort: bool = False,
     suffixes: Suffixes = ("_x", "_y"),
+    prefixes: Prefixes | None = None,
     indicator: str | bool = False,
     validate: str | None = None,
 ) -> DataFrame:
@@ -448,6 +472,7 @@ def _cross_merge(
         right_index=right_index,
         sort=sort,
         suffixes=suffixes,
+        prefixes=prefixes,
         indicator=indicator,
         validate=validate,
     )
@@ -955,6 +980,7 @@ class _MergeOperation:
     right_index: bool
     sort: bool
     suffixes: Suffixes
+    prefixes: Prefixes | None
     indicator: str | bool
     validate: str | None
     join_names: list[Hashable]
@@ -972,6 +998,7 @@ class _MergeOperation:
         left_index: bool = False,
         right_index: bool = False,
         sort: bool = True,
+        prefixes: Prefixes = ("x_", "y_"),
         suffixes: Suffixes = ("_x", "_y"),
         indicator: str | bool = False,
         validate: str | None = None,
@@ -985,6 +1012,14 @@ class _MergeOperation:
         self.on = com.maybe_make_list(on)
 
         self.suffixes = suffixes
+        self.prefixes = prefixes
+        
+        # Validate that prefixes and suffixes are mutually exclusive
+        if prefixes is not None and suffixes != ("_x", "_y"):
+            raise ValueError(
+                "Cannot specify both 'prefixes' and 'suffixes'. Use either 'prefixes' or 'suffixes', not both."
+            )
+        
         self.sort = sort or how == "outer"
 
         self.left_index = left_index
@@ -1094,9 +1129,14 @@ class _MergeOperation:
         left = self.left[:]
         right = self.right[:]
 
-        llabels, rlabels = _items_overlap_with_suffix(
-            self.left._info_axis, self.right._info_axis, self.suffixes
-        )
+        if self.prefixes is not None:
+            llabels, rlabels = _items_overlap_with_prefix(
+                self.left._info_axis, self.right._info_axis, self.prefixes
+            )
+        else:
+            llabels, rlabels = _items_overlap_with_suffix(
+                self.left._info_axis, self.right._info_axis, self.suffixes
+            )
 
         if left_indexer is not None and not is_range_indexer(left_indexer, len(left)):
             # Pinning the index here (and in the right code just below) is not
@@ -2252,6 +2292,7 @@ class _OrderedMerge(_MergeOperation):
         right_on: IndexLabel | None = None,
         left_index: bool = False,
         right_index: bool = False,
+        prefixes: Prefixes = ("x_", "y_"),
         suffixes: Suffixes = ("_x", "_y"),
         fill_method: str | None = None,
         how: JoinHow | Literal["asof"] = "outer",
@@ -2267,6 +2308,7 @@ class _OrderedMerge(_MergeOperation):
             right_index=right_index,
             right_on=right_on,
             how=how,
+            prefixes=prefixes,
             suffixes=suffixes,
             sort=True,  # factorize sorts
         )
@@ -2320,6 +2362,7 @@ class _AsOfMerge(_OrderedMerge):
         by=None,
         left_by=None,
         right_by=None,
+        prefixes: Prefixes = ("x_", "y_"),
         suffixes: Suffixes = ("_x", "_y"),
         how: Literal["asof"] = "asof",
         tolerance=None,
@@ -2355,6 +2398,7 @@ class _AsOfMerge(_OrderedMerge):
             left_index=left_index,
             right_index=right_index,
             how=how,
+            prefixes=prefixes,
             suffixes=suffixes,
             fill_method=None,
         )
@@ -3058,6 +3102,74 @@ def _validate_operand(obj: DataFrame | Series) -> DataFrame:
             f"Can only merge Series or DataFrame objects, a {type(obj)} was passed"
         )
 
+def _items_overlap_with_prefix(
+        left: Index, right: Index, prefixes: Prefixes
+) -> tuple[Index, Index]:
+    """
+    Prefixes type validation.
+
+    If two indices overlap, add prefixes to overlapping entries.
+
+    If corresponding prefix is empty, the entry is simply converted to string.
+
+    """
+    if not is_list_like(prefixes, allow_sets=False) or isinstance(prefixes, dict):
+        raise TypeError(
+            f"Passing 'prefixes' as a {type(prefixes)}, is not supported. "
+            "Provide 'prefixes' as a tuple instead."
+        )
+    
+    to_rename = left.intersection(right)
+    if len(to_rename) == 0:
+        return left, right
+    
+    lprefix, rprefix = prefixes
+
+    if not lprefix and not rprefix:
+        raise ValueError(f"columns overlap but no prefix specified: {to_rename}")
+    
+    def renamer(x, prefix: str | None):
+        """
+        Rename the left and right indices.
+
+        If there is overlap, and prefix is not None, add
+        prefix, otherwise, leave it as-is.
+
+        Parameters
+        ----------
+        x : original column name
+        prefix : str or None
+
+        Returns
+        -------
+        x : renamed column name
+        """
+        if x in to_rename and prefix is not None:
+            return f"{prefix}{x}"
+        return x
+    
+    lrenamer = partial(renamer, prefix=lprefix)
+    rrenamer = partial(renamer, prefix=rprefix)
+
+    llabels = left._transform_index(lrenamer)
+    rlabels = right._transform_index(rrenamer)
+
+    dups = []
+    if not llabels.is_unique:
+        # Only warn when duplicates are caused because of prefixes, already duplicated
+        # columns in origin should not warn
+        dups.extend(llabels[(llabels.duplicated()) & (~left.duplicated())].tolist())
+    if not rlabels.is_unique:
+        dups.extend(rlabels[(rlabels.duplicated()) & (~right.duplicated())].tolist())
+    # Prefix addition creates duplicate to pre-existing column name
+    dups.extend(llabels.intersection(right.difference(to_rename)).tolist())
+    dups.extend(rlabels.intersection(left.difference(to_rename)).tolist())
+    if dups:
+        raise MergeError(
+            f"Passing 'prefixes' which cause duplicate columns {set(dups)} is "
+            "not allowed.",
+        )
+    return llabels, rlabels
 
 def _items_overlap_with_suffix(
     left: Index, right: Index, suffixes: Suffixes

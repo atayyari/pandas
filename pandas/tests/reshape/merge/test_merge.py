@@ -2393,6 +2393,28 @@ def test_merge_suffix(col1, col2, kwargs, expected_cols):
     result = merge(a, b, left_index=True, right_index=True, **kwargs)
     tm.assert_frame_equal(result, expected)
 
+@pytest.mark.parametrize(
+    "col1, col2, prefixes, expected_cols",
+    [
+        (0, 0, ("left_", "right_"), ["left_0", "right_0"]),
+        ("a", "a", ("L_", "R_"), ["L_a", "R_a"]),
+        (0.0, 0.0, ("L_", "R_"), ["L_0.0", "R_0.0"]),
+        ("b", "b", ("left_", "right_"), ["left_b", "right_b"]),
+    ],
+)
+def test_merge_prefix(col1, col2, prefixes, expected_cols):
+    # GH 45623
+    a = DataFrame({col1: [1, 2, 3]})
+    b = DataFrame({col2: [4, 5, 6]})
+
+    expected = DataFrame([[1, 4], [2, 5], [3, 6]], columns=expected_cols)
+
+    result = a.merge(b, left_index=True, right_index=True, prefixes=prefixes)
+    tm.assert_frame_equal(result, expected)
+
+    result = merge(a, b, left_index=True, right_index=True, prefixes=prefixes)
+    tm.assert_frame_equal(result, expected)
+    
 
 @pytest.mark.parametrize(
     "how,expected",

@@ -253,6 +253,7 @@ if TYPE_CHECKING:
         SortKind,
         StorageOptions,
         Suffixes,
+        Prefixes,
         T,
         ToStataByteorder,
         ToTimestampHow,
@@ -11437,6 +11438,7 @@ class DataFrame(NDFrame, OpsMixin):
         right_index: bool = False,
         sort: bool = False,
         suffixes: Suffixes = ("_x", "_y"),
+        prefixes: Prefixes | None = None,
         copy: bool | lib.NoDefault = lib.no_default,
         indicator: str | bool = False,
         validate: MergeValidate | None = None,
@@ -11456,6 +11458,7 @@ class DataFrame(NDFrame, OpsMixin):
             right_index=right_index,
             sort=sort,
             suffixes=suffixes,
+            prefixes=prefixes,
             indicator=indicator,
             validate=validate,
         )
